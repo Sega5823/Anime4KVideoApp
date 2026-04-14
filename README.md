@@ -75,6 +75,12 @@ Result:
 
 ## Downloads
 
+Current release:
+
+- Release page: https://github.com/Sega5823/Anime4KVideoApp/releases/tag/v1.0.0
+- Full portable ZIP: https://github.com/Sega5823/Anime4KVideoApp/releases/download/v1.0.0/Anime4KVideoApp-full-portable.zip
+- Lite portable ZIP: https://github.com/Sega5823/Anime4KVideoApp/releases/download/v1.0.0/Anime4KVideoApp-lite-portable.zip
+
 For GitHub Releases, publish portable archives instead of a standalone `.exe`.
 
 Recommended release assets:
