@@ -4,6 +4,8 @@ Windows GUI for batch video processing with Anime4K shaders and FFmpeg.
 
 The application scans a folder of videos, builds a shader pipeline from bundled Anime4K presets, and runs FFmpeg jobs with progress tracking in a JavaFX desktop UI.
 
+![Application screenshot](docs/images/app-screenshot.png)
+
 ## Versions
 
 ### Full
