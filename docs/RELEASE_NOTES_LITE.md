@@ -14,7 +14,8 @@ Portable Windows build without bundled FFmpeg tools.
 
 - `ffmpeg` available in `PATH`
 - `ffprobe` available in `PATH`
-- NVIDIA-compatible NVENC environment for the current encoding pipeline
+- FFmpeg build with `libplacebo`
+- One of the supported encoders: `h264_nvenc`, `h264_amf`, `h264_qsv`, `libx264`
 
 ### Highlights
 

@@ -24,7 +24,8 @@ Portable Windows build with bundled FFmpeg tools.
 ### Notes
 
 - Distribute the whole portable folder, not only the `.exe`
-- This build uses an NVENC-based encoding pipeline and is intended for systems with NVIDIA hardware support
+- Supported video encoders: `h264_nvenc`, `h264_amf`, `h264_qsv`, `libx264`
+- Requires an FFmpeg build with `libplacebo`
 - Third-party notices and license notes are included in the repository
 
 ### Download
