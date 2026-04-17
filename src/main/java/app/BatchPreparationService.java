@@ -38,11 +38,14 @@ final class BatchPreparationService {
         List<PreparedJob> preparedJobs = new ArrayList<>();
 
         for (VideoItem item : items) {
-            Path outputPath = buildOutputPath(item.path(), config, reservedOutputPaths);
+            PreparedPath preparedPath = buildPreparedPath(item.path(), config, reservedOutputPaths);
             preparedJobs.add(new PreparedJob(
                     item,
-                    outputPath,
-                    buildCommand(item, config, outputPath)
+                    preparedPath.commandOutputPath(),
+                    preparedPath.finalOutputPath(),
+                    config.deleteProcessedSource(),
+                    preparedPath.replaceSourceInPlace(),
+                    buildCommand(item, config, preparedPath.commandOutputPath())
             ));
         }
 
@@ -50,12 +53,19 @@ final class BatchPreparationService {
     }
 
     PreparedJob prepareJob(VideoItem item, BatchConfig config) {
-        Path outputPath = buildOutputPath(item.path(), config, new HashSet<>());
-        return new PreparedJob(item, outputPath, buildCommand(item, config, outputPath));
+        PreparedPath preparedPath = buildPreparedPath(item.path(), config, new HashSet<>());
+        return new PreparedJob(
+                item,
+                preparedPath.commandOutputPath(),
+                preparedPath.finalOutputPath(),
+                config.deleteProcessedSource(),
+                preparedPath.replaceSourceInPlace(),
+                buildCommand(item, config, preparedPath.commandOutputPath())
+        );
     }
 
     Path previewOutputPath(VideoItem item, BatchConfig config) {
-        return buildOutputPath(item.path(), config, new HashSet<>());
+        return buildPreparedPath(item.path(), config, new HashSet<>()).finalOutputPath();
     }
 
     void validateBatchStart(BatchConfig config, List<PreparedJob> preparedJobs) {
@@ -65,9 +75,9 @@ final class BatchPreparationService {
 
         Path expectedOutputDir = Paths.get(config.outputFolder()).toAbsolutePath().normalize();
         for (PreparedJob preparedJob : preparedJobs) {
-            Path outputPath = preparedJob.outputPath();
-            if (!outputPath.getParent().equals(expectedOutputDir)) {
-                throw new IllegalArgumentException("output path escaped output folder: " + outputPath);
+            Path commandOutputPath = preparedJob.commandOutputPath();
+            if (!commandOutputPath.getParent().equals(expectedOutputDir)) {
+                throw new IllegalArgumentException("output path escaped output folder: " + commandOutputPath);
             }
         }
     }
@@ -139,10 +149,46 @@ final class BatchPreparationService {
         return command;
     }
 
-    private Path buildOutputPath(Path inputVideo, BatchConfig config, Set<Path> reservedOutputPaths) {
+    private PreparedPath buildPreparedPath(Path inputVideo, BatchConfig config, Set<Path> reservedOutputPaths) {
         String fileName = inputVideo.getFileName().toString();
-        int dot = fileName.lastIndexOf('.');
-        String base = dot > 0 ? fileName.substring(0, dot) : fileName;
+        String outputName = buildOutputFileName(fileName, config);
+        Path finalOutputPath = Paths.get(config.outputFolder()).resolve(outputName).toAbsolutePath().normalize();
+        Path normalizedInputPath = inputVideo.toAbsolutePath().normalize();
+        boolean replaceSourceInPlace = config.deleteProcessedSource() && normalizedInputPath.equals(finalOutputPath);
+        Path commandOutputPath = replaceSourceInPlace
+                ? buildTemporaryOutputPath(finalOutputPath, reservedOutputPaths)
+                : finalOutputPath;
+
+        if ("Auto rename".equals(config.existingFileMode())) {
+            int counter = 1;
+            while (Files.exists(commandOutputPath) || reservedOutputPaths.contains(commandOutputPath)) {
+                String renamed = appendCounterToFileName(outputName, counter);
+                finalOutputPath = Paths.get(config.outputFolder()).resolve(renamed).toAbsolutePath().normalize();
+                commandOutputPath = finalOutputPath;
+                counter++;
+            }
+        } else if (reservedOutputPaths.contains(commandOutputPath)) {
+            throw new IllegalArgumentException("duplicate output path within current batch: " + commandOutputPath);
+        }
+
+        if (normalizedInputPath.equals(commandOutputPath)) {
+            throw new IllegalArgumentException("output file matches input file: " + commandOutputPath);
+        }
+
+        reservedOutputPaths.add(commandOutputPath);
+        if (!commandOutputPath.equals(finalOutputPath)) {
+            reservedOutputPaths.add(finalOutputPath);
+        }
+        return new PreparedPath(commandOutputPath, finalOutputPath, replaceSourceInPlace);
+    }
+
+    private String buildOutputFileName(String inputFileName, BatchConfig config) {
+        if ("Original filename".equals(config.outputNamingMode())) {
+            return inputFileName;
+        }
+
+        int dot = inputFileName.lastIndexOf('.');
+        String base = dot > 0 ? inputFileName.substring(0, dot) : inputFileName;
 
         String presetSlug = config.preset().name()
                 .replace("Anime4K:", "")
@@ -158,22 +204,42 @@ final class BatchPreparationService {
             }
         }
 
-        String outputName = base + "_" + presetSlug + suffix + ".mkv";
-        Path outputPath = Paths.get(config.outputFolder()).resolve(outputName).toAbsolutePath().normalize();
+        return base + "_" + presetSlug + suffix + ".mkv";
+    }
 
-        if ("Auto rename".equals(config.existingFileMode())) {
-            int counter = 1;
-            while (Files.exists(outputPath) || reservedOutputPaths.contains(outputPath)) {
-                String renamed = base + "_" + presetSlug + suffix + "_" + counter + ".mkv";
-                outputPath = Paths.get(config.outputFolder()).resolve(renamed).toAbsolutePath().normalize();
-                counter++;
-            }
-        } else if (reservedOutputPaths.contains(outputPath)) {
-            throw new IllegalArgumentException("duplicate output path within current batch: " + outputPath);
+    private String appendCounterToFileName(String fileName, int counter) {
+        int dot = fileName.lastIndexOf('.');
+        if (dot <= 0) {
+            return fileName + "_" + counter;
         }
+        return fileName.substring(0, dot) + "_" + counter + fileName.substring(dot);
+    }
 
-        reservedOutputPaths.add(outputPath);
-        return outputPath;
+    private Path buildTemporaryOutputPath(Path finalOutputPath, Set<Path> reservedOutputPaths) {
+        String fileName = finalOutputPath.getFileName().toString();
+        int counter = 1;
+        Path candidate = finalOutputPath.resolveSibling(appendTempMarker(fileName, counter));
+        while (Files.exists(candidate) || reservedOutputPaths.contains(candidate)) {
+            counter++;
+            candidate = finalOutputPath.resolveSibling(appendTempMarker(fileName, counter));
+        }
+        return candidate;
+    }
+
+    private String appendTempMarker(String fileName, int counter) {
+        int dot = fileName.lastIndexOf('.');
+        String marker = ".anime4k_tmp_" + counter;
+        if (dot <= 0) {
+            return fileName + marker;
+        }
+        return fileName.substring(0, dot) + marker + fileName.substring(dot);
+    }
+
+    private record PreparedPath(
+            Path commandOutputPath,
+            Path finalOutputPath,
+            boolean replaceSourceInPlace
+    ) {
     }
 
     private void appendVideoEncoderArgs(List<String> command, String encoderId, String cq) {

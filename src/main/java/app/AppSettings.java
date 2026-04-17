@@ -14,7 +14,9 @@ record AppSettings(
         boolean testMode,
         String testDuration,
         String existingFileMode,
-        String outputSuffix
+        String outputNamingMode,
+        String outputSuffix,
+        boolean deleteProcessedSource
 ) {
     static AppSettings load(Preferences prefs) {
         return new AppSettings(
@@ -29,7 +31,9 @@ record AppSettings(
                 prefs.getBoolean("testMode", false),
                 prefs.get("testDuration", "60"),
                 prefs.get("existingFileMode", "Overwrite"),
-                prefs.get("outputSuffix", "")
+                prefs.get("outputNamingMode", "Preset name + suffix"),
+                prefs.get("outputSuffix", ""),
+                prefs.getBoolean("deleteProcessedSource", false)
         );
     }
 
@@ -53,6 +57,10 @@ record AppSettings(
         if (existingFileMode != null) {
             prefs.put("existingFileMode", existingFileMode);
         }
+        if (outputNamingMode != null) {
+            prefs.put("outputNamingMode", outputNamingMode);
+        }
         prefs.put("outputSuffix", outputSuffix == null ? "" : outputSuffix);
+        prefs.putBoolean("deleteProcessedSource", deleteProcessedSource);
     }
 }

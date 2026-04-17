@@ -78,7 +78,9 @@ public class Anime4KVideoApp extends Application {
     private ProgressBar overallProgressBar;
     private Label overallProgressLabel;
     private ComboBox<String> existingFileModeComboBox;
+    private ComboBox<String> outputNamingModeComboBox;
     private TextField outputSuffixField;
+    private CheckBox deleteProcessedSourceCheckBox;
 
     public static void main(String[] args) {
         launch(args);
@@ -145,9 +147,17 @@ public class Anime4KVideoApp extends Application {
         ));
         existingFileModeComboBox.getSelectionModel().select(prefs.get("existingFileMode", "Overwrite"));
 
+        outputNamingModeComboBox = new ComboBox<>(FXCollections.observableArrayList(
+                "Preset name + suffix",
+                "Original filename"
+        ));
+        outputNamingModeComboBox.getSelectionModel().select(prefs.get("outputNamingMode", "Preset name + suffix"));
+
         outputSuffixField = new TextField();
         outputSuffixField.setText(prefs.get("outputSuffix", ""));
         outputSuffixField.setPromptText("Suffix, for example _test or _cq16");
+        deleteProcessedSourceCheckBox = new CheckBox("Delete processed source files");
+        deleteProcessedSourceCheckBox.setSelected(prefs.getBoolean("deleteProcessedSource", false));
 
         threadsComboBox.valueProperty().addListener((obs, o, n) -> {
             saveSettings();
@@ -161,8 +171,20 @@ public class Anime4KVideoApp extends Application {
         existingFileModeComboBox.valueProperty().addListener((obs, o, n) -> {
             saveSettings();
             refreshCommandPreview();
+            videoTable.refresh();
+        });
+        outputNamingModeComboBox.valueProperty().addListener((obs, o, n) -> {
+            saveSettings();
+            updateOutputNamingControls();
+            refreshCommandPreview();
+            videoTable.refresh();
         });
         outputSuffixField.textProperty().addListener((obs, o, n) -> {
+            saveSettings();
+            refreshCommandPreview();
+            videoTable.refresh();
+        });
+        deleteProcessedSourceCheckBox.selectedProperty().addListener((obs, o, n) -> {
             saveSettings();
             refreshCommandPreview();
             videoTable.refresh();
@@ -432,7 +454,9 @@ public class Anime4KVideoApp extends Application {
         actions.setAlignment(Pos.CENTER_LEFT);
         HBox outputOptionsBox = new HBox(12,
                 new Label("If file exists"), existingFileModeComboBox,
-                new Label("Output suffix"), outputSuffixField
+                new Label("Output name"), outputNamingModeComboBox,
+                new Label("Output suffix"), outputSuffixField,
+                deleteProcessedSourceCheckBox
         );
         outputOptionsBox.setAlignment(Pos.CENTER_LEFT);
 
@@ -452,6 +476,7 @@ public class Anime4KVideoApp extends Application {
         VBox.setVgrow(logArea, Priority.ALWAYS);
         VBox.setVgrow(commandArea, Priority.SOMETIMES);
 
+        updateOutputNamingControls();
         refreshCommandPreview();
         validateAll();
         autoScanSavedInputFolder();
@@ -501,7 +526,9 @@ public class Anime4KVideoApp extends Application {
                 testModeCheckBox != null && testModeCheckBox.isSelected(),
                 testDurationComboBox == null ? "60" : testDurationComboBox.getValue(),
                 existingFileModeComboBox == null ? "Overwrite" : existingFileModeComboBox.getValue(),
-                outputSuffixField == null ? "" : outputSuffixField.getText()
+                outputNamingModeComboBox == null ? "Preset name + suffix" : outputNamingModeComboBox.getValue(),
+                outputSuffixField == null ? "" : outputSuffixField.getText(),
+                deleteProcessedSourceCheckBox != null && deleteProcessedSourceCheckBox.isSelected()
         ).save(prefs);
     }
 
@@ -605,7 +632,11 @@ public class Anime4KVideoApp extends Application {
         Preset preset = Objects.requireNonNull(presetComboBox.getValue(), "preset is null");
         String videoEncoder = Objects.requireNonNullElse(videoEncoderComboBox.getValue(), "NVIDIA (h264_nvenc)");
         String existingMode = Objects.requireNonNullElse(existingFileModeComboBox.getValue(), "Overwrite");
-        String outputSuffix = outputSuffixField.getText() == null ? "" : outputSuffixField.getText();
+        String outputNamingMode = Objects.requireNonNullElse(outputNamingModeComboBox.getValue(), "Preset name + suffix");
+        String outputSuffix = "Original filename".equals(outputNamingMode)
+                ? ""
+                : (outputSuffixField.getText() == null ? "" : outputSuffixField.getText());
+        boolean deleteProcessedSource = deleteProcessedSourceCheckBox.isSelected();
 
         Integer threadCount = null;
         String threads = threadsComboBox.getValue();
@@ -637,12 +668,24 @@ public class Anime4KVideoApp extends Application {
                 videoEncoder,
                 preset,
                 existingMode,
+                outputNamingMode,
                 outputSuffix,
+                deleteProcessedSource,
                 threadCount,
                 testMode,
                 testDurationSeconds,
                 combinedShaderFile
         );
+    }
+
+    private void updateOutputNamingControls() {
+        boolean preserveOriginalName = "Original filename".equals(outputNamingModeComboBox.getValue());
+        outputSuffixField.setDisable(preserveOriginalName);
+        if (preserveOriginalName) {
+            outputSuffixField.setPromptText("Suffix is disabled when original filename is preserved");
+        } else {
+            outputSuffixField.setPromptText("Suffix, for example _test or _cq16");
+        }
     }
 
     private String previewOutputPath(VideoItem item) {
@@ -979,7 +1022,9 @@ public class Anime4KVideoApp extends Application {
         testModeCheckBox.setDisable(running);
         testDurationComboBox.setDisable(running || !testModeCheckBox.isSelected());
         existingFileModeComboBox.setDisable(running);
-        outputSuffixField.setDisable(running);
+        outputNamingModeComboBox.setDisable(running);
+        outputSuffixField.setDisable(running || "Original filename".equals(outputNamingModeComboBox.getValue()));
+        deleteProcessedSourceCheckBox.setDisable(running);
     }
 
     private void runSingleJob(PreparedJob job, BatchConfig config) {
@@ -1021,14 +1066,24 @@ public class Anime4KVideoApp extends Application {
             }
 
             int exitCode = process.waitFor();
+            if (exitCode == 0) {
+                finalizeSuccessfulJob(job);
+            } else if (job.replaceSourceInPlace()) {
+                cleanupTemporaryOutput(job.commandOutputPath());
+            }
+
+            boolean success = exitCode == 0;
             Platform.runLater(() -> {
-                item.progressProperty().set(exitCode == 0 ? 1.0 : 0.0);
-                item.statusProperty().set(exitCode == 0 ? "Done" : "Error");
+                item.progressProperty().set(success ? 1.0 : 0.0);
+                item.statusProperty().set(success ? "Done" : "Error");
                 updateOverallProgress();
                 videoTable.refresh();
             });
             appendLog("=== END: " + item.name() + " (exit " + exitCode + ") ===\n\n");
         } catch (IOException e) {
+            if (job.replaceSourceInPlace()) {
+                cleanupTemporaryOutput(job.commandOutputPath());
+            }
             Platform.runLater(() -> {
                 item.progressProperty().set(0.0);
                 item.statusProperty().set("Error");
@@ -1049,6 +1104,32 @@ public class Anime4KVideoApp extends Application {
             if (process != null) {
                 currentProcesses.remove(process);
             }
+        }
+    }
+
+    private void finalizeSuccessfulJob(PreparedJob job) throws IOException {
+        Path sourcePath = job.item().path();
+        Path commandOutputPath = job.commandOutputPath();
+        Path finalOutputPath = job.finalOutputPath();
+
+        if (job.replaceSourceInPlace()) {
+            Files.delete(sourcePath);
+            Files.move(commandOutputPath, finalOutputPath, StandardCopyOption.REPLACE_EXISTING);
+            appendLog("Replaced source with processed file: " + finalOutputPath + "\n");
+            return;
+        }
+
+        if (job.deleteSourceAfterSuccess()) {
+            Files.delete(sourcePath);
+            appendLog("Deleted processed source: " + sourcePath + "\n");
+        }
+    }
+
+    private void cleanupTemporaryOutput(Path temporaryOutputPath) {
+        try {
+            Files.deleteIfExists(temporaryOutputPath);
+        } catch (IOException e) {
+            appendLog("Cannot delete temporary output: " + temporaryOutputPath + " (" + e.getMessage() + ")\n");
         }
     }
 

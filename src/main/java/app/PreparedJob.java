@@ -5,7 +5,10 @@ import java.util.List;
 
 record PreparedJob(
         VideoItem item,
-        Path outputPath,
+        Path commandOutputPath,
+        Path finalOutputPath,
+        boolean deleteSourceAfterSuccess,
+        boolean replaceSourceInPlace,
         List<String> command
 ) {
 }
